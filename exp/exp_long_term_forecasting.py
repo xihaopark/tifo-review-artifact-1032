@@ -10,39 +10,9 @@ import time
 import warnings
 import numpy as np
 import random
-from utils.dtw_metric import dtw,accelerated_dtw
-from utils.augmentation import run_augmentation,run_augmentation_single
 from utils.frequency_domain_filter import run_filter
 from utils.experiment_record import write_run_manifest
 warnings.filterwarnings('ignore')
-
-
-def apply_controlled_spectral_shift(batch_x, batch_y, label_len, pred_len, strength):
-    """Apply a deterministic high-band amplitude intervention to a full window.
-
-    The input and its future target are transformed together so evaluation
-    measures forecasting under a coherent shifted process rather than corrupting
-    only the observed context. DC and the lower half of non-DC rFFT bins are
-    unchanged; upper bins are multiplied by ``1 + strength``.
-    """
-    if strength == 0:
-        return batch_x, batch_y
-    future = batch_y[:, -pred_len:, :]
-    full_window = torch.cat((batch_x, future), dim=1)
-    mean = full_window.mean(dim=1, keepdim=True)
-    spectrum = torch.fft.rfft(full_window - mean, dim=1)
-    non_dc_bins = spectrum.shape[1] - 1
-    high_start = 1 + non_dc_bins // 2
-    gain = torch.ones(spectrum.shape[1], device=spectrum.device, dtype=spectrum.real.dtype)
-    gain[high_start:] = 1.0 + strength
-    shifted = torch.fft.irfft(
-        spectrum * gain.view(1, -1, 1), n=full_window.shape[1], dim=1
-    ) + mean
-    shifted_x = shifted[:, :batch_x.shape[1], :]
-    shifted_y = torch.cat(
-        (shifted_x[:, -label_len:, :], shifted[:, batch_x.shape[1]:, :]), dim=1
-    )
-    return shifted_x, shifted_y
 
 
 class Exp_Long_Term_Forecast(Exp_Basic):
@@ -258,11 +228,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
 
-        evaluation_tag = getattr(self.args, 'evaluation_tag', '')
-        evaluation_setting = setting if not evaluation_tag else f'{setting}__{evaluation_tag}'
         preds = []
         trues = []
-        folder_path = './test_results/' + evaluation_setting + '/'
+        folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -271,14 +239,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
-
-                batch_x, batch_y = apply_controlled_spectral_shift(
-                    batch_x,
-                    batch_y,
-                    self.args.label_len,
-                    self.args.pred_len,
-                    float(getattr(self.args, 'spectral_shift_strength', 0.0)),
-                )
 
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
@@ -337,31 +297,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = './results/' + evaluation_setting + '/'
+        folder_path = './results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
-
-        # dtw calculation
-        # if self.args.use_dtw:
-        #     dtw_list = []
-        #     manhattan_distance = lambda x, y: np.abs(x - y)
-        #     for i in range(preds.shape[0]):
-        #         x = preds[i].reshape(-1,1)
-        #         y = trues[i].reshape(-1,1)
-        #         if i % 100 == 0:
-        #             print("calculating dtw iter:", i)
-        #         d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-        #         dtw_list.append(d)
-        #     dtw = np.array(dtw_list).mean()
-        # else:
-        #     dtw = -999
-
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         dtw_value = -999
         print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw_value))
         f = open("result_long_term_forecast.txt", 'a')
-        f.write(evaluation_setting + "  \n")
+        f.write(setting + "  \n")
         f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw_value))
         f.write('\n')
         f.write('\n')
@@ -374,7 +318,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         write_run_manifest(
             self.args,
-            evaluation_setting,
+            setting,
             folder_path,
             metrics={
                 'mae': float(mae),

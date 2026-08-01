@@ -2,10 +2,6 @@ import argparse
 import os
 import torch
 from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
-from exp.exp_imputation import Exp_Imputation
-from exp.exp_short_term_forecasting import Exp_Short_Term_Forecast
-from exp.exp_anomaly_detection import Exp_Anomaly_Detection
-from exp.exp_classification import Exp_Classification
 from utils.print_args import print_args
 import random
 import numpy as np
@@ -19,12 +15,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='TimesNet')
 
     parser.add_argument('--filter_dim',     type=int, default=512)
-    parser.add_argument('--tifo_prior_strength', type=float, default=0.0,
-                        help='strength of the normalized stationarity-score prior in TIFO weights')
     parser.add_argument('--tifo_variant', type=str, default='historical',
                         choices=[
                             'historical',
-                            'identity_prior',
                             'hermitian_raw',
                             'hermitian_aligned',
                         ],
@@ -49,19 +42,6 @@ if __name__ == '__main__':
     parser.add_argument('--method', type=str, default='tifo', choices=['ori', 'tifo'],
                         help='representation method; ori disables TIFO and is the matched backbone control')
 
-    #Fredformer:
-    parser.add_argument('--cf_dim',         type=int, default=48)   #feature dimension
-    parser.add_argument('--cf_drop',        type=float, default=0.2)#dropout
-    parser.add_argument('--cf_depth',       type=int, default=2)    #Transformer layer
-    parser.add_argument('--cf_heads',       type=int, default=6)    #number of multi-heads
-    #parser.add_argument('--cf_patch_len',  type=int, default=16)   #patch length
-    parser.add_argument('--cf_mlp',         type=int, default=128)  #ff dimension
-    parser.add_argument('--cf_head_dim',    type=int, default=32)   #dimension for single head
-    parser.add_argument('--cf_weight_decay',type=float, default=0)  #weight_decay
-    parser.add_argument('--cf_p',           type=int, default=1)    #patch_type
-    parser.add_argument('--use_nys',           type=int, default=0)    #use nystrom
-    parser.add_argument('--mlp_drop',           type=float, default=0.3)    #output type
-    parser.add_argument('--ablation',       type=int, default=0)    #ablation study 012.
     parser.add_argument('--random_seed', type=int, default=2021, help='random seed')
     parser.add_argument('--fc_dropout', type=float, default=0.05, help='fully connected dropout')
     parser.add_argument('--head_dropout', type=float, default=0.0, help='head dropout')
@@ -71,12 +51,14 @@ if __name__ == '__main__':
     parser.add_argument('--stride', type=int, default=8, help='stride')
 
     # basic config
-    parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
-                        help='task name, options:[long_term_forecast, short_term_forecast, imputation, classification, anomaly_detection]')
+    parser.add_argument('--task_name', type=str, required=True,
+                        choices=['long_term_forecast'],
+                        help='artifact scope: long-term forecasting')
     parser.add_argument('--is_training', type=int, required=True, default=1, help='status')
     parser.add_argument('--model_id', type=str, required=True, default='test', help='model id')
-    parser.add_argument('--model', type=str, required=True, default='Autoformer',
-                        help='model name, options: [Autoformer, Transformer, TimesNet]')
+    parser.add_argument('--model', type=str, required=True,
+                        choices=['DLinear', 'iTransformer', 'PatchTST'],
+                        help='forecasting backbone')
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTm1', help='dataset type')
@@ -95,12 +77,6 @@ if __name__ == '__main__':
     parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
     parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
     parser.add_argument('--inverse', action='store_true', help='inverse output data', default=False)
-
-    # inputation task
-    parser.add_argument('--mask_rate', type=float, default=0.25, help='mask ratio')
-
-    # anomaly detection task
-    parser.add_argument('--anomaly_ratio', type=float, default=0.25, help='prior anomaly ratio (%%)')
 
     # model define
     parser.add_argument('--expand', type=int, default=2, help='expansion factor for Mamba')
@@ -152,7 +128,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
 
     # GPU
-    parser.add_argument('--use_gpu', type=bool, default=True, help='use gpu')
+    parser.add_argument('--use_gpu', type=int, choices=[0, 1], default=1,
+                        help='use CUDA when available: 1=yes, 0=no')
     parser.add_argument('--gpu', type=int, default=0, help='gpu')
     parser.add_argument('--use_multi_gpu', action='store_true', help='use multiple gpus', default=False)
     parser.add_argument('--devices', type=str, default='0,1,2,3', help='device ids of multile gpus')
@@ -161,10 +138,6 @@ if __name__ == '__main__':
     parser.add_argument('--p_hidden_dims', type=int, nargs='+', default=[128, 128],
                         help='hidden layer dimensions of projector (List)')
     parser.add_argument('--p_hidden_layers', type=int, default=2, help='number of hidden layers in projector')
-
-    # metrics (dtw)
-    parser.add_argument('--use_dtw', type=bool, default=False,
-                        help='the controller of using dtw metric (dtw is time consuming, not suggested unless necessary)')
 
     # Augmentation
     parser.add_argument('--augmentation_ratio', type=int, default=0, help="How many times to augment")
@@ -189,11 +162,6 @@ if __name__ == '__main__':
                         help='validation-only tuning run; do not inspect the test split')
     parser.add_argument('--save_arrays', action='store_true',
                         help='save large prediction/target arrays in addition to metrics')
-    parser.add_argument('--spectral_shift_strength', type=float, default=0.0,
-                        help='evaluation-only gain applied to the upper half of non-DC rFFT bins over the combined input/future window')
-    parser.add_argument('--evaluation_tag', type=str, default='',
-                        help='suffix for evaluation outputs; does not alter the checkpoint setting')
-
     args = parser.parse_args()
     if args.cpu_threads < 1:
         parser.error('--cpu_threads must be at least 1')
@@ -203,12 +171,6 @@ if __name__ == '__main__':
         parser.error('--tifo_residual_alpha must be in [0, 1]')
     if args.tifo_zero_pad_ratio < 0:
         parser.error('--tifo_zero_pad_ratio must be non-negative')
-    if args.spectral_shift_strength < 0:
-        parser.error('--spectral_shift_strength must be non-negative')
-    if args.is_training and args.spectral_shift_strength != 0:
-        parser.error('--spectral_shift_strength is evaluation-only; use --is_training 0')
-    if args.evaluation_tag and not args.evaluation_tag.replace('_', '').replace('-', '').isalnum():
-        parser.error('--evaluation_tag may contain only letters, numbers, underscores, and hyphens')
     torch.set_num_threads(args.cpu_threads)
     torch.set_num_interop_threads(args.cpu_threads)
     fix_seed = args.random_seed
@@ -217,8 +179,7 @@ if __name__ == '__main__':
     np.random.seed(fix_seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(fix_seed)
-    # args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
-    args.use_gpu = True if torch.cuda.is_available() else False
+    args.use_gpu = bool(args.use_gpu and torch.cuda.is_available())
 
     print(torch.cuda.is_available())
 
@@ -231,18 +192,7 @@ if __name__ == '__main__':
     print('Args in experiment:')
     print_args(args)
 
-    if args.task_name == 'long_term_forecast':
-        Exp = Exp_Long_Term_Forecast
-    elif args.task_name == 'short_term_forecast':
-        Exp = Exp_Short_Term_Forecast
-    elif args.task_name == 'imputation':
-        Exp = Exp_Imputation
-    elif args.task_name == 'anomaly_detection':
-        Exp = Exp_Anomaly_Detection
-    elif args.task_name == 'classification':
-        Exp = Exp_Classification
-    else:
-        Exp = Exp_Long_Term_Forecast
+    Exp = Exp_Long_Term_Forecast
 
     if args.is_training:
         for ii in range(args.itr):

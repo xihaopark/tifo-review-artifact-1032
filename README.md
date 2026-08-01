@@ -89,6 +89,7 @@ python run.py \
   --filter_dim 512 \
   --tifo_variant hermitian_raw \
   --tifo_dropout 0.5 \
+  --tifo_lr_scale 1.0 \
   --tifo_residual_alpha 1.0 \
   --tifo_zero_pad_ratio 0.0 \
   --train_epochs 30 --patience 5 \
@@ -121,7 +122,12 @@ stream used to initialize the shared backbone.
 
 The statistic is computed from the training loader only. TIFO parameters are
 optimized jointly with the backbone under forecasting MSE; they are spectral
-gains and are not kernel eigenvalues.
+gains and are not kernel eigenvalues. The two gain MLPs use hidden width
+`--filter_dim` (512 by default), RReLU, and `--tifo_dropout` (0.5 by default).
+`--tifo_residual_alpha` interpolates between the unchanged input (`0`) and the
+filtered input (`1`). `--tifo_lr_scale` optionally scales only the TIFO
+parameters' learning rate relative to the backbone. Frozen commands should
+state both values explicitly.
 
 ## Output and reproducibility
 
