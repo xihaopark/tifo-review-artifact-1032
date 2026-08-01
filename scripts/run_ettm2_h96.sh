@@ -28,6 +28,7 @@ python run.py \
   --filter_dim 512 \
   --tifo_variant hermitian_raw \
   --tifo_dropout 0.5 \
+  --tifo_lr_scale 1.0 \
   --tifo_residual_alpha 1.0 \
   --tifo_zero_pad_ratio 0.0 \
   --train_epochs 30 \

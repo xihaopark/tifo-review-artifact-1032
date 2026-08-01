@@ -43,7 +43,7 @@ class GlobalMaskCalculator:
                 if variant == "historical":
                     amplitude = torch.abs(torch.fft.fft(x, n=fft_size, dim=1))
                 else:
-                    if variant in {"identity_prior", "hermitian_aligned"}:
+                    if variant == "hermitian_aligned":
                         # Match the per-window normalization applied by the
                         # iTransformer/PatchTST input path before TIFO.
                         x = (x - x.mean(1, keepdim=True)) / torch.sqrt(
@@ -86,7 +86,7 @@ def run_filter(args, loader, device=None):
 
 
 class FrequencyDomainFilter(nn.Module):
-    """Paper-aligned TIFO input transform with a stable identity initialization."""
+    """Paper-aligned TIFO input transform."""
 
     def __init__(self, args, global_mask_amp):
         super().__init__()
@@ -117,68 +117,25 @@ class FrequencyDomainFilter(nn.Module):
         )
         hidden_dim = int(getattr(args, "filter_dim", 512))
 
-        if self.variant in {
-            "historical",
-            "hermitian_raw",
-            "hermitian_aligned",
-        }:
-            dropout = float(getattr(args, "tifo_dropout", 0.5))
-
-            def historical_mlp():
-                return nn.Sequential(
-                    nn.Linear(frequencies, hidden_dim),
-                    nn.RReLU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(hidden_dim, frequencies),
-                )
-
-            self.linear_r = historical_mlp()
-            self.linear_i = historical_mlp()
-            return
-
-        prior_strength = float(getattr(args, "tifo_prior_strength", 0.0))
-        if prior_strength < 0:
-            raise ValueError("tifo_prior_strength must be non-negative")
-        normalized_score = self.stationarity_score / self.stationarity_score.mean(
-            dim=0, keepdim=True
-        ).clamp_min(1e-5)
-        score_prior = normalized_score.clamp_min(1e-4).pow(prior_strength)
-        self.register_buffer("score_prior", score_prior.clamp(0.25, 4.0))
+        dropout = float(getattr(args, "tifo_dropout", 0.5))
 
         def weight_mlp():
-            network = nn.Sequential(
+            return nn.Sequential(
                 nn.Linear(frequencies, hidden_dim),
-                nn.GELU(),
+                nn.RReLU(),
+                nn.Dropout(dropout),
                 nn.Linear(hidden_dim, frequencies),
             )
-            # lambda = 2 * sigmoid(0) = 1, so TIFO starts as the identity.
-            nn.init.zeros_(network[-1].weight)
-            nn.init.zeros_(network[-1].bias)
-            return network
 
-        self.real_weight_mlp = weight_mlp()
-        self.imag_weight_mlp = weight_mlp()
+        self.linear_r = weight_mlp()
+        self.linear_i = weight_mlp()
 
     def frequency_weights(self):
-        if self.variant in {
-            "historical",
-            "hermitian_raw",
-            "hermitian_aligned",
-        }:
-            score_by_channel = self.stationarity_score.transpose(0, 1)
-            return (
-                self.linear_r(score_by_channel).transpose(0, 1),
-                self.linear_i(score_by_channel).transpose(0, 1),
-            )
         score_by_channel = self.stationarity_score.transpose(0, 1)
-        prior = self.score_prior.transpose(0, 1)
-        real_weight = prior * 2.0 * torch.sigmoid(
-            self.real_weight_mlp(score_by_channel)
+        return (
+            self.linear_r(score_by_channel).transpose(0, 1),
+            self.linear_i(score_by_channel).transpose(0, 1),
         )
-        imag_weight = prior * 2.0 * torch.sigmoid(
-            self.imag_weight_mlp(score_by_channel)
-        )
-        return real_weight.transpose(0, 1), imag_weight.transpose(0, 1)
 
     def forward(self, x):
         if x.size(1) != self.seq_len:
